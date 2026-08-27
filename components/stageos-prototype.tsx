@@ -538,8 +538,8 @@ function InvitesPanel({
   const firstMissing = slotsNeedingInvite.find((slot) => !invitationBySlot.has(slot.id));
 
   return (
-    <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
-      <div className="glass rounded-lg p-4">
+    <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="glass min-w-0 rounded-lg p-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Inviti e conferme</h1>
@@ -564,7 +564,7 @@ function InvitesPanel({
             const creating = creatingSlotId === slot.id;
 
             return (
-              <div key={slot.id} className="rounded-lg border border-white/10 bg-ink-900 p-3">
+              <div key={slot.id} className="min-w-0 rounded-lg border border-white/10 bg-ink-900 p-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div className="min-w-0">
                     <p className="font-medium">{slot.role}</p>
@@ -577,13 +577,14 @@ function InvitesPanel({
 
                 {invitation ? (
                   <>
-                    <div className="mt-3 rounded-md bg-ink-950 p-3 text-sm leading-6 text-slate-300">
-                      {invitation.message.split("\n").map((line, index) => (
-                        <span key={`${invitation.id}-${index}`}>
-                          {line}
-                          <br />
-                        </span>
-                      ))}
+                    <div className="mt-3 overflow-hidden rounded-md border border-signal-cyan/20 bg-ink-950 p-3">
+                      <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Link con token</p>
+                      <p className="mt-2 break-all font-mono text-sm text-signal-cyan">{invitation.shareUrl}</p>
+                      <p className="mt-2 break-all text-xs text-slate-400">Token: {invitation.responseToken}</p>
+                    </div>
+
+                    <div className="mt-3 whitespace-pre-wrap break-all rounded-md bg-ink-950 p-3 text-sm leading-6 text-slate-300">
+                      {invitation.message}
                     </div>
 
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row">

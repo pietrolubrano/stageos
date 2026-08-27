@@ -114,6 +114,7 @@ export async function listInvitations(productionId?: string): Promise<ShareInvit
     const production = unwrapRelation(productionSlot?.productions);
     const professional = unwrapRelation(invitation.professionals);
     const shareUrl = buildInviteUrl(invitation.response_token);
+    const message = withShareUrl(invitation.message ?? "", shareUrl);
 
     return {
       id: invitation.id,
@@ -122,10 +123,10 @@ export async function listInvitations(productionId?: string): Promise<ShareInvit
       professional: professional?.full_name ?? null,
       channel: invitation.channel,
       status: invitation.status,
-      message: invitation.message,
+      message,
       responseToken: invitation.response_token,
       shareUrl,
-      whatsappShareUrl: buildWhatsAppShareUrl(invitation.message)
+      whatsappShareUrl: buildWhatsAppShareUrl(message)
     };
   });
 }
@@ -164,6 +165,7 @@ export async function createInvitation(productionSlotId: string) {
     const productionSlot = unwrapRelation(existing.production_slots);
     const professional = unwrapRelation(existing.professionals);
     const shareUrl = buildInviteUrl(existing.response_token);
+    const message = withShareUrl(existing.message ?? "", shareUrl);
 
     return {
       id: existing.id,
@@ -172,10 +174,10 @@ export async function createInvitation(productionSlotId: string) {
       professional: professional?.full_name ?? null,
       channel: existing.channel,
       status: existing.status,
-      message: existing.message,
+      message,
       responseToken: existing.response_token,
       shareUrl,
-      whatsappShareUrl: buildWhatsAppShareUrl(existing.message)
+      whatsappShareUrl: buildWhatsAppShareUrl(message)
     };
   }
 
@@ -493,8 +495,16 @@ function buildShareText(
   ].join("\n");
 }
 
+function withShareUrl(message: string, shareUrl: string) {
+  if (message.includes(shareUrl)) {
+    return message;
+  }
+
+  return `${message.trim()}\n\nRispondi qui: ${shareUrl}`;
+}
+
 function buildInviteUrl(token: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   return `${baseUrl.replace(/\/$/, "")}/i/${token}`;
 }
 
