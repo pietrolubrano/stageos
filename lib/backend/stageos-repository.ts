@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { productions, professionalJobs } from "@/lib/data";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import type { CrewSlot, Production, ProfessionalJob, SlotStatus } from "@/lib/types";
+import type { CrewSlot, Production, ProfessionalJob, ShareInvitation, SlotStatus } from "@/lib/types";
 
 type DbProduction = {
   id: string;
@@ -26,18 +26,7 @@ type DbProduction = {
 };
 
 type InvitationResponse = "accepted" | "declined";
-export type ShareInvitation = {
-  id: string;
-  productionId: string;
-  productionSlotId: string;
-  professional: string | null;
-  channel: "share_link" | "whatsapp_share" | "push" | "email";
-  status: string;
-  message: string;
-  responseToken: string;
-  shareUrl: string;
-  whatsappShareUrl: string;
-};
+export type { ShareInvitation };
 
 export type PublicInvitation = {
   id: string;
@@ -106,7 +95,7 @@ export async function listInvitations(productionId?: string): Promise<ShareInvit
   let query = db
     .from("invitations")
     .select(
-      "id, status, channel, message, response_token, production_slot_id, professionals(full_name), production_slots(id, production_id, productions(id))"
+      "id, status, channel, message, response_token, production_slot_id, professionals(full_name), production_slots!inner(id, production_id, productions(id))"
     )
     .order("created_at", { ascending: false });
 
@@ -121,21 +110,23 @@ export async function listInvitations(productionId?: string): Promise<ShareInvit
   }
 
   return data.map((invitation: any) => {
-    const productionSlot = Array.isArray(invitation.production_slots) ? invitation.production_slots[0] : invitation.production_slots;
-    const production = Array.isArray(productionSlot?.productions) ? productionSlot.productions[0] : productionSlot?.productions;
+    const productionSlot = unwrapRelation(invitation.production_slots);
+    const production = unwrapRelation(productionSlot?.productions);
+    const professional = unwrapRelation(invitation.professionals);
     const shareUrl = buildInviteUrl(invitation.response_token);
+    const message = withShareUrl(invitation.message ?? "", shareUrl);
 
     return {
       id: invitation.id,
       productionId: production?.id ?? productionSlot?.production_id ?? "",
       productionSlotId: invitation.production_slot_id,
-      professional: invitation.professionals?.full_name ?? null,
+      professional: professional?.full_name ?? null,
       channel: invitation.channel,
       status: invitation.status,
-      message: invitation.message,
+      message,
       responseToken: invitation.response_token,
       shareUrl,
-      whatsappShareUrl: buildWhatsAppShareUrl(invitation.message)
+      whatsappShareUrl: buildWhatsAppShareUrl(message)
     };
   });
 }
@@ -161,6 +152,35 @@ export async function createInvitation(productionSlotId: string) {
   }
 
   const db = supabase as any;
+  const { data: existing } = await db
+    .from("invitations")
+    .select("id, response_token, status, message, channel, production_slot_id, professionals(full_name), production_slots(production_id)")
+    .eq("production_slot_id", productionSlotId)
+    .in("status", ["draft", "shared", "opened"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    const productionSlot = unwrapRelation(existing.production_slots);
+    const professional = unwrapRelation(existing.professionals);
+    const shareUrl = buildInviteUrl(existing.response_token);
+    const message = withShareUrl(existing.message ?? "", shareUrl);
+
+    return {
+      id: existing.id,
+      productionId: productionSlot?.production_id ?? "",
+      productionSlotId: existing.production_slot_id,
+      professional: professional?.full_name ?? null,
+      channel: existing.channel,
+      status: existing.status,
+      message,
+      responseToken: existing.response_token,
+      shareUrl,
+      whatsappShareUrl: buildWhatsAppShareUrl(message)
+    };
+  }
+
   const { data: slot, error: slotError } = await db
     .from("production_slots")
     .select("id, professional_id, department, role, fee, productions(id, artist, city, venue, production_date, call_time, soundcheck_time, show_time)")
@@ -171,14 +191,20 @@ export async function createInvitation(productionSlotId: string) {
     throw new Error(slotError.message);
   }
 
-  const production = Array.isArray(slot.productions) ? slot.productions[0] : slot.productions;
+  const production = unwrapRelation(slot.productions);
+
+  if (!production) {
+    throw new Error("Produzione non trovata per lo slot");
+  }
   const token = randomUUID();
   const shareUrl = buildInviteUrl(token);
   const message = buildShareText(
     {
       artist: production.artist,
       city: production.city,
-      date: production.production_date,
+      date: new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric" }).format(
+        new Date(`${production.production_date}T00:00:00`)
+      ),
       callTime: formatTime(production.call_time),
       soundcheck: formatTime(production.soundcheck_time),
       showTime: formatTime(production.show_time)
@@ -208,10 +234,14 @@ export async function createInvitation(productionSlotId: string) {
   await db.from("production_slots").update({ status: "pending" }).eq("id", productionSlotId);
 
   return {
-    ...data,
+    id: data.id,
     productionId: production.id,
     productionSlotId: slot.id,
+    professional: null,
     channel: "whatsapp_share",
+    status: data.status,
+    message,
+    responseToken: data.response_token,
     shareUrl,
     whatsappShareUrl: buildWhatsAppShareUrl(message)
   };
@@ -269,14 +299,19 @@ export async function getPublicInvitation(token: string): Promise<PublicInvitati
 
   await db.from("invitations").update({ status: data.status === "shared" ? "opened" : data.status, opened_at: new Date().toISOString() }).eq("id", data.id);
 
-  const slot = Array.isArray(data.production_slots) ? data.production_slots[0] : data.production_slots;
-  const production = Array.isArray(slot.productions) ? slot.productions[0] : slot.productions;
+  const slot = unwrapRelation(data.production_slots);
+  const production = unwrapRelation(slot?.productions);
+  const professional = unwrapRelation(data.professionals);
+
+  if (!slot || !production) {
+    return null;
+  }
 
   return {
     id: data.id,
     productionSlotId: data.production_slot_id,
     token: data.response_token,
-    professional: data.professionals?.full_name ?? null,
+    professional: professional?.full_name ?? null,
     production: {
       artist: production.artist,
       city: production.city,
@@ -349,7 +384,39 @@ export async function respondToInvitation(idOrToken: string, response: Invitatio
 }
 
 export async function getProfessionalHome(): Promise<ProfessionalJob[]> {
-  return professionalJobs;
+  const supabase = getSupabaseAdmin();
+
+  if (!supabase) {
+    return professionalJobs;
+  }
+
+  const db = supabase as any;
+  const { data, error } = await db
+    .from("production_slots")
+    .select("id, role, status, fee, productions(artist, city, production_date)")
+    .not("professional_id", "is", null)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data.map((slot: any) => {
+    const production = unwrapRelation(slot.productions);
+    const date = production?.production_date
+      ? new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short" }).format(new Date(`${production.production_date}T00:00:00`)).toUpperCase()
+      : "--";
+
+    return {
+      id: slot.id,
+      date,
+      title: production?.artist ?? "Produzione",
+      role: slot.role,
+      city: production?.city ?? "",
+      status: slot.status === "pending" ? "reply" : slot.status === "confirmed" ? "confirmed" : "unavailable",
+      fee: slot.fee
+    } satisfies ProfessionalJob;
+  });
 }
 
 function mapProduction(production: DbProduction): Production {
@@ -366,7 +433,7 @@ function mapProduction(production: DbProduction): Production {
     showTime: formatTime(production.show_time),
     template: production.production_templates?.name ?? "Template manuale",
     manager: production.profiles?.full_name ?? "Production manager",
-    slots: production.production_slots.map((slot) => ({
+    slots: (production.production_slots ?? []).map((slot) => ({
       id: slot.id,
       department: slot.department as CrewSlot["department"],
       role: slot.role,
@@ -428,8 +495,16 @@ function buildShareText(
   ].join("\n");
 }
 
+function withShareUrl(message: string, shareUrl: string) {
+  if (message.includes(shareUrl)) {
+    return message;
+  }
+
+  return `${message.trim()}\n\nRispondi qui: ${shareUrl}`;
+}
+
 function buildInviteUrl(token: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   return `${baseUrl.replace(/\/$/, "")}/i/${token}`;
 }
 
@@ -439,4 +514,12 @@ function buildWhatsAppShareUrl(message: string) {
 
 function formatTime(value: string | null) {
   return value ? value.slice(0, 5) : "--:--";
+}
+
+function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) {
+    return null;
+  }
+
+  return Array.isArray(value) ? (value[0] ?? null) : value;
 }

@@ -1,33 +1,20 @@
-insert into auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
-values
-  ('11111111-1111-4111-8111-111111111111', 'manager@stageos.local', crypt('stageos-demo', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now()),
-  ('22222222-2222-4222-8222-222222222222', 'foh@stageos.local', crypt('stageos-demo', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{}', now(), now())
-on conflict (id) do nothing;
-
-insert into public.profiles (id, full_name, phone)
-values
-  ('11111111-1111-4111-8111-111111111111', 'Pietro Manager', '+39 333 000 0000'),
-  ('22222222-2222-4222-8222-222222222222', 'Pietro I.', '+39 333 000 0001')
-on conflict (id) do nothing;
+-- Remote-safe demo data: public tables only (no auth.users).
+-- Manager name falls back to "Production manager" until Auth is connected.
 
 insert into public.organizations (id, name)
 values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'StageOS Demo')
 on conflict (id) do nothing;
 
-insert into public.organization_members (organization_id, user_id, role)
-values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '11111111-1111-4111-8111-111111111111', 'owner')
-on conflict do nothing;
-
-insert into public.professionals (id, organization_id, profile_id, full_name, phone, kind, city, source)
+insert into public.professionals (id, organization_id, full_name, phone, kind, city, source)
 values
-  ('30000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '22222222-2222-4222-8222-222222222222', 'Pietro I.', '+39 333 000 0001', 'technician', 'Napoli', 'stageos'),
-  ('30000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Marco Bifulco', '+39 333 000 0002', 'musician', 'Napoli', 'rubrica'),
-  ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Marta Vitiello', '+39 333 000 0003', 'dancer', 'Salerno', 'stageos'),
-  ('30000000-0000-4000-8000-000000000004', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Sara Fusco', '+39 333 000 0004', 'dancer', 'Napoli', 'rubrica'),
-  ('30000000-0000-4000-8000-000000000005', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Nadia Ferri', '+39 333 000 0005', 'technician', 'Napoli', 'stageos'),
-  ('30000000-0000-4000-8000-000000000006', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Enzo Greco', '+39 333 000 0006', 'production', 'Napoli', 'rubrica'),
-  ('30000000-0000-4000-8000-000000000007', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Ciro Lanza', '+39 333 000 0007', 'video', 'Napoli', 'esterno'),
-  ('30000000-0000-4000-8000-000000000008', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', null, 'Lorenzo Pace', '+39 333 000 0008', 'technician', 'Salerno', 'rubrica')
+  ('30000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Pietro I.', '+39 333 000 0001', 'technician', 'Napoli', 'stageos'),
+  ('30000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Marco Bifulco', '+39 333 000 0002', 'musician', 'Napoli', 'rubrica'),
+  ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Marta Vitiello', '+39 333 000 0003', 'dancer', 'Salerno', 'stageos'),
+  ('30000000-0000-4000-8000-000000000004', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Sara Fusco', '+39 333 000 0004', 'dancer', 'Napoli', 'rubrica'),
+  ('30000000-0000-4000-8000-000000000005', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Nadia Ferri', '+39 333 000 0005', 'technician', 'Napoli', 'stageos'),
+  ('30000000-0000-4000-8000-000000000006', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Enzo Greco', '+39 333 000 0006', 'production', 'Napoli', 'rubrica'),
+  ('30000000-0000-4000-8000-000000000007', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Ciro Lanza', '+39 333 000 0007', 'video', 'Napoli', 'esterno'),
+  ('30000000-0000-4000-8000-000000000008', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Lorenzo Pace', '+39 333 000 0008', 'technician', 'Salerno', 'rubrica')
 on conflict (id) do nothing;
 
 insert into public.production_templates (id, organization_id, name, description)
@@ -36,10 +23,10 @@ values
   ('40000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'ARENA - LIGHT', 'Template ridotto per arena')
 on conflict (organization_id, name) do nothing;
 
-insert into public.productions (id, organization_id, template_id, artist, city, venue, production_date, call_time, soundcheck_time, show_time, manager_user_id)
+insert into public.productions (id, organization_id, template_id, artist, city, venue, production_date, call_time, soundcheck_time, show_time)
 values
-  ('50000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '40000000-0000-4000-8000-000000000001', 'Veronica Simioli', 'Napoli', 'Teatro Mediterraneo', '2026-09-18', '15:00', '18:00', '21:30', '11111111-1111-4111-8111-111111111111'),
-  ('50000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '40000000-0000-4000-8000-000000000002', 'Produzione XYZ', 'Salerno', 'Arena del Mare', '2026-09-21', '14:30', '17:30', '22:00', '11111111-1111-4111-8111-111111111111')
+  ('50000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '40000000-0000-4000-8000-000000000001', 'Veronica Simioli', 'Napoli', 'Teatro Mediterraneo', '2026-09-18', '15:00', '18:00', '21:30'),
+  ('50000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '40000000-0000-4000-8000-000000000002', 'Produzione XYZ', 'Salerno', 'Arena del Mare', '2026-09-21', '14:30', '17:30', '22:00')
 on conflict (id) do nothing;
 
 insert into public.production_slots (id, production_id, professional_id, department, role, status, fee, source)

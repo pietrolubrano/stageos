@@ -34,3 +34,16 @@ export type ProfessionalJob = {
   status: "confirmed" | "reply" | "unavailable";
   fee?: number;
 };
+
+export type ShareInvitation = {
+  id: string;
+  productionId: string;
+  productionSlotId: string;
+  professional: string | null;
+  channel: "share_link" | "whatsapp_share" | "push" | "email";
+  status: string;
+  message: string;
+  responseToken: string;
+  shareUrl: string;
+  whatsappShareUrl: string;
+};
