@@ -8,8 +8,10 @@ import {
   CircleAlert,
   ClipboardList,
   Clock3,
+  Copy,
   Headphones,
   LayoutDashboard,
+  Loader2,
   MessageCircle,
   Mic2,
   Plus,
@@ -21,10 +23,11 @@ import {
   UsersRound,
   X
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { productions, professionalJobs, templates } from "@/lib/data";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createInvitation, fetchInvitations, fetchProductions, fetchProfessionalHome } from "@/lib/client/api";
+import { templates } from "@/lib/data";
 import { departmentSummary, invitationCount, productionIssues } from "@/lib/metrics";
-import type { CrewSlot, Production, SlotStatus } from "@/lib/types";
+import type { CrewSlot, Production, ProfessionalJob, ShareInvitation, SlotStatus } from "@/lib/types";
 
 type View = "dashboard" | "production" | "crew" | "invites" | "professional";
 
@@ -45,10 +48,66 @@ const statusCopy: Record<SlotStatus, string> = {
 
 export function StageOSPrototype() {
   const [view, setView] = useState<View>("dashboard");
-  const [selectedProductionId, setSelectedProductionId] = useState(productions[0].id);
+  const [productions, setProductions] = useState<Production[]>([]);
+  const [invitations, setInvitations] = useState<ShareInvitation[]>([]);
+  const [jobs, setJobs] = useState<ProfessionalJob[]>([]);
+  const [selectedProductionId, setSelectedProductionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [creatingSlotId, setCreatingSlotId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [nextProductions, nextInvitations, nextJobs] = await Promise.all([fetchProductions(), fetchInvitations(), fetchProfessionalHome()]);
+    setProductions(nextProductions);
+    setInvitations(nextInvitations);
+    setJobs(nextJobs);
+    setSelectedProductionId((current) => current ?? nextProductions[0]?.id ?? null);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        await refresh();
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "Impossibile caricare i dati");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
   const selectedProduction = productions.find((production) => production.id === selectedProductionId) ?? productions[0];
   const missingTotal = productions.reduce((sum, production) => sum + productionIssues(production), 0);
   const pendingTotal = productions.reduce((sum, production) => sum + invitationCount(production, "pending"), 0);
+
+  async function handleCreateInvitation(productionSlotId: string) {
+    setCreatingSlotId(productionSlotId);
+    setError(null);
+
+    try {
+      await createInvitation(productionSlotId);
+      await refresh();
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Impossibile creare l'invito");
+    } finally {
+      setCreatingSlotId(null);
+    }
+  }
 
   return (
     <main className="min-h-screen px-4 py-4 text-slate-100 sm:px-6 lg:px-8">
@@ -89,10 +148,10 @@ export function StageOSPrototype() {
           <div className="mt-6 rounded-lg border border-white/10 bg-ink-900 p-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <ShieldCheck size={17} className="text-signal-green" />
-              Supabase ready
+              {loading ? "Caricamento dati" : error ? "API non raggiungibile" : "Dati live"}
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-400">
-              Dati separati dalla UI: Auth, DB, realtime e inviti via link possono entrare senza riscrivere le viste.
+              Produzioni, slot e inviti arrivano dalle API. Il manager condivide un link `/i/[token]` dal proprio WhatsApp.
             </p>
           </div>
         </aside>
@@ -102,8 +161,12 @@ export function StageOSPrototype() {
 
           <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
             <div className="min-w-0">
-              {view === "dashboard" && (
+              {loading && <LoadingState />}
+              {!loading && error && <ErrorState message={error} />}
+              {!loading && !error && !selectedProduction && <EmptyState />}
+              {!loading && selectedProduction && view === "dashboard" && (
                 <Dashboard
+                  productions={productions}
                   missingTotal={missingTotal}
                   pendingTotal={pendingTotal}
                   onOpenProduction={(id) => {
@@ -112,13 +175,22 @@ export function StageOSPrototype() {
                   }}
                 />
               )}
-              {view === "production" && <ProductionDetail production={selectedProduction} onGoCrew={() => setView("crew")} />}
-              {view === "crew" && <CrewBoard production={selectedProduction} />}
-              {view === "invites" && <InvitesPanel production={selectedProduction} />}
-              {view === "professional" && <ProfessionalWorkspace />}
+              {!loading && selectedProduction && view === "production" && (
+                <ProductionDetail production={selectedProduction} onGoCrew={() => setView("crew")} />
+              )}
+              {!loading && selectedProduction && view === "crew" && <CrewBoard production={selectedProduction} />}
+              {!loading && selectedProduction && view === "invites" && (
+                <InvitesPanel
+                  production={selectedProduction}
+                  invitations={invitations.filter((invitation) => invitation.productionId === selectedProduction.id)}
+                  creatingSlotId={creatingSlotId}
+                  onCreateInvitation={handleCreateInvitation}
+                />
+              )}
+              {!loading && view === "professional" && <ProfessionalWorkspace jobs={jobs} />}
             </div>
 
-            <MobilePreview selectedProduction={selectedProduction} />
+            {selectedProduction && <MobilePreview selectedProduction={selectedProduction} jobs={jobs} />}
           </div>
         </section>
       </div>
@@ -149,11 +221,42 @@ function TopBar() {
   );
 }
 
+function LoadingState() {
+  return (
+    <section className="glass grid place-items-center rounded-lg p-10 text-slate-400">
+      <div className="flex items-center gap-3">
+        <Loader2 className="animate-spin" size={18} />
+        Caricamento produzioni e inviti
+      </div>
+    </section>
+  );
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <section className="glass rounded-lg border border-signal-red/30 p-6">
+      <p className="font-semibold text-signal-red">Non riesco a leggere i dati live</p>
+      <p className="mt-2 text-sm leading-6 text-slate-400">{message}</p>
+    </section>
+  );
+}
+
+function EmptyState() {
+  return (
+    <section className="glass rounded-lg p-6">
+      <p className="font-semibold">Nessuna produzione</p>
+      <p className="mt-2 text-sm leading-6 text-slate-400">Quando lo schema e il seed saranno sul progetto Supabase, dashboard e inviti si popolano da qui.</p>
+    </section>
+  );
+}
+
 function Dashboard({
+  productions,
   missingTotal,
   pendingTotal,
   onOpenProduction
 }: {
+  productions: Production[];
   missingTotal: number;
   pendingTotal: number;
   onOpenProduction: (id: string) => void;
@@ -201,6 +304,7 @@ function Metric({ label, value, tone }: { label: string; value: string; tone: "c
 function ProductionCard({ production, onOpen }: { production: Production; onOpen: () => void }) {
   const departments = departmentSummary(production.slots);
   const issues = productionIssues(production);
+  const issueRoles = production.slots.filter((slot) => slot.status === "missing" || slot.status === "declined").map((slot) => slot.role);
 
   return (
     <article className="glass rounded-lg p-4">
@@ -241,7 +345,8 @@ function ProductionCard({ production, onOpen }: { production: Production; onOpen
         <div className="mt-4 flex items-start gap-2 rounded-md border border-signal-red/30 bg-signal-red/10 p-3 text-sm text-slate-200">
           <CircleAlert size={18} className="mt-0.5 shrink-0 text-signal-red" />
           <span>
-            Mancano {issues} assegnazioni o sostituzioni. Priorita: ballerina, luci e LED operator.
+            Mancano {issues} assegnazioni o sostituzioni
+            {issueRoles.length > 0 ? `. Priorita: ${issueRoles.join(", ")}.` : "."}
           </span>
         </div>
       )}
@@ -411,11 +516,26 @@ function CrewRow({ slot }: { slot: CrewSlot }) {
   );
 }
 
-function InvitesPanel({ production }: { production: Production }) {
-  const invitations = useMemo(
+function InvitesPanel({
+  production,
+  invitations,
+  creatingSlotId,
+  onCreateInvitation
+}: {
+  production: Production;
+  invitations: ShareInvitation[];
+  creatingSlotId: string | null;
+  onCreateInvitation: (productionSlotId: string) => Promise<void>;
+}) {
+  const slotsNeedingInvite = useMemo(
     () => production.slots.filter((slot) => slot.status === "pending" || slot.status === "missing" || slot.status === "declined"),
     [production]
   );
+  const invitationBySlot = useMemo(
+    () => new Map(invitations.map((invitation) => [invitation.productionSlotId, invitation])),
+    [invitations]
+  );
+  const firstMissing = slotsNeedingInvite.find((slot) => !invitationBySlot.has(slot.id));
 
   return (
     <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
@@ -425,16 +545,23 @@ function InvitesPanel({ production }: { production: Production }) {
             <h1 className="text-2xl font-semibold">Inviti e conferme</h1>
             <p className="mt-1 text-sm text-slate-400">StageOS prepara il link, il manager invia dal proprio WhatsApp.</p>
           </div>
-          <button className="flex h-10 items-center justify-center gap-2 rounded-md bg-white px-3 text-sm font-semibold text-ink-950">
-            <Send size={17} />
+          <button
+            className="flex h-10 items-center justify-center gap-2 rounded-md bg-white px-3 text-sm font-semibold text-ink-950 disabled:opacity-50"
+            disabled={!firstMissing || creatingSlotId !== null}
+            onClick={() => firstMissing && onCreateInvitation(firstMissing.id)}
+          >
+            {creatingSlotId ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
             Crea link invito
           </button>
         </div>
 
         <div className="mt-4 grid gap-3">
-          {invitations.map((slot) => {
-            const shareUrl = `${getAppUrl()}/i/demo-${slot.id}`;
-            const message = buildDemoShareText(production, slot, shareUrl);
+          {slotsNeedingInvite.length === 0 && (
+            <div className="rounded-lg border border-white/10 bg-ink-900 p-4 text-sm text-slate-400">Tutti gli slot di questa produzione sono confermati.</div>
+          )}
+          {slotsNeedingInvite.map((slot) => {
+            const invitation = invitationBySlot.get(slot.id);
+            const creating = creatingSlotId === slot.id;
 
             return (
               <div key={slot.id} className="rounded-lg border border-white/10 bg-ink-900 p-3">
@@ -448,35 +575,59 @@ function InvitesPanel({ production }: { production: Production }) {
                   <StatusPill status={slot.status} label={statusCopy[slot.status]} />
                 </div>
 
-                <div className="mt-3 rounded-md bg-ink-950 p-3 text-sm leading-6 text-slate-300">
-                  {message.split("\n").map((line, index) => (
-                    <span key={`${slot.id}-${index}`}>
-                      {line}
-                      <br />
-                    </span>
-                  ))}
-                </div>
+                {invitation ? (
+                  <>
+                    <div className="mt-3 rounded-md bg-ink-950 p-3 text-sm leading-6 text-slate-300">
+                      {invitation.message.split("\n").map((line, index) => (
+                        <span key={`${invitation.id}-${index}`}>
+                          {line}
+                          <br />
+                        </span>
+                      ))}
+                    </div>
 
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                  <a
-                    className="flex h-10 items-center justify-center gap-2 rounded-md bg-[#25D366] px-3 text-sm font-semibold text-ink-950"
-                    href={`https://wa.me/?text=${encodeURIComponent(message)}`}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <MessageCircle size={17} />
-                    Apri WhatsApp
-                  </a>
-                  <a
-                    className="flex h-10 items-center justify-center gap-2 rounded-md border border-white/10 px-3 text-sm font-semibold text-slate-200 hover:bg-white/10"
-                    href={shareUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    Apri pagina risposta
-                    <ChevronRight size={17} />
-                  </a>
-                </div>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <a
+                        className="flex h-10 items-center justify-center gap-2 rounded-md bg-[#25D366] px-3 text-sm font-semibold text-ink-950"
+                        href={invitation.whatsappShareUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <MessageCircle size={17} />
+                        Apri WhatsApp
+                      </a>
+                      <button
+                        className="flex h-10 items-center justify-center gap-2 rounded-md border border-white/10 px-3 text-sm font-semibold text-slate-200 hover:bg-white/10"
+                        onClick={() => navigator.clipboard.writeText(invitation.shareUrl)}
+                        type="button"
+                      >
+                        <Copy size={17} />
+                        Copia link
+                      </button>
+                      <a
+                        className="flex h-10 items-center justify-center gap-2 rounded-md border border-white/10 px-3 text-sm font-semibold text-slate-200 hover:bg-white/10"
+                        href={invitation.shareUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Apri pagina risposta
+                        <ChevronRight size={17} />
+                      </a>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-3">
+                    <button
+                      className="flex h-10 items-center justify-center gap-2 rounded-md bg-white px-3 text-sm font-semibold text-ink-950 disabled:opacity-50"
+                      disabled={creatingSlotId !== null}
+                      onClick={() => onCreateInvitation(slot.id)}
+                      type="button"
+                    >
+                      {creating ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
+                      Genera link condivisibile
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -495,26 +646,6 @@ function InvitesPanel({ production }: { production: Production }) {
   );
 }
 
-function buildDemoShareText(production: Production, slot: CrewSlot, shareUrl: string) {
-  return [
-    "Pietro ti invita a una nuova data:",
-    "",
-    production.artist,
-    `${production.date} · ${production.city}`,
-    `Ruolo: ${slot.role}`,
-    `Call: ${production.callTime}`,
-    `Soundcheck: ${production.soundcheck}`,
-    `Show: ${production.showTime}`,
-    `Cachet: €${slot.fee}`,
-    "",
-    `Rispondi qui: ${shareUrl}`
-  ].join("\n");
-}
-
-function getAppUrl() {
-  return (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
-}
-
 function ChannelStep({ icon: Icon, title, text }: { icon: typeof MessageCircle; title: string; text: string }) {
   return (
     <div className="rounded-md border border-white/10 bg-ink-950 p-3">
@@ -527,7 +658,9 @@ function ChannelStep({ icon: Icon, title, text }: { icon: typeof MessageCircle; 
   );
 }
 
-function ProfessionalWorkspace() {
+function ProfessionalWorkspace({ jobs }: { jobs: ProfessionalJob[] }) {
+  const incoming = jobs.find((job) => job.status === "reply") ?? jobs[0];
+
   return (
     <section className="glass rounded-lg p-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -544,35 +677,38 @@ function ProfessionalWorkspace() {
         <div className="rounded-lg border border-white/10 bg-ink-900 p-4">
           <h2 className="text-lg font-semibold">Prossime date</h2>
           <div className="mt-4 grid gap-3">
-            {professionalJobs.map((job) => (
+            {jobs.length === 0 && <p className="text-sm text-slate-400">Nessuna data assegnata.</p>}
+            {jobs.map((job) => (
               <ProfessionalJobRow key={job.id} job={job} />
             ))}
           </div>
         </div>
         <div className="rounded-lg border border-white/10 bg-ink-900 p-4">
           <h2 className="text-lg font-semibold">Proposta in arrivo</h2>
-          <div className="mt-4 rounded-lg bg-white p-4 text-ink-950">
-            <p className="text-sm font-semibold text-slate-500">Nuova data</p>
-            <h3 className="mt-2 text-xl font-semibold">21 settembre · Salerno</h3>
-            <div className="mt-4 grid gap-2 text-sm">
-              <InfoLine label="Ruolo" value="FOH Engineer" />
-              <InfoLine label="Call" value="15:00" />
-              <InfoLine label="Soundcheck" value="18:00" />
-              <InfoLine label="Show" value="21:30" />
-              <InfoLine label="Cachet" value="€250" />
+          {incoming ? (
+            <div className="mt-4 rounded-lg bg-white p-4 text-ink-950">
+              <p className="text-sm font-semibold text-slate-500">Nuova data</p>
+              <h3 className="mt-2 text-xl font-semibold">
+                {incoming.date} · {incoming.city}
+              </h3>
+              <div className="mt-4 grid gap-2 text-sm">
+                <InfoLine label="Ruolo" value={incoming.role} />
+                <InfoLine label="Titolo" value={incoming.title} />
+                <InfoLine label="Cachet" value={incoming.fee ? `€${incoming.fee}` : "Da confermare"} />
+              </div>
+              <p className="mt-5 text-sm text-slate-500">Per accettare o rifiutare usa il link pubblico ricevuto su WhatsApp.</p>
             </div>
-            <div className="mt-5 grid grid-cols-2 gap-2">
-              <button className="h-11 rounded-md bg-ink-950 font-semibold text-white">Accetta</button>
-              <button className="h-11 rounded-md border border-slate-300 font-semibold text-ink-950">Rifiuta</button>
-            </div>
-          </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-400">Nessuna proposta in attesa.</p>
+          )}
         </div>
       </div>
     </section>
   );
 }
 
-function MobilePreview({ selectedProduction }: { selectedProduction: Production }) {
+function MobilePreview({ selectedProduction, jobs }: { selectedProduction: Production; jobs: ProfessionalJob[] }) {
+  const incoming = jobs.find((job) => job.status === "reply");
   return (
     <aside className="glass hidden rounded-lg p-4 2xl:block">
       <div className="mx-auto w-[300px] rounded-[34px] border border-white/15 bg-ink-950 p-3 shadow-panel">
@@ -587,9 +723,9 @@ function MobilePreview({ selectedProduction }: { selectedProduction: Production 
 
           <div className="mt-5 rounded-2xl bg-ink-950 p-4 text-white">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Rispondi ora</p>
-            <h3 className="mt-2 text-lg font-semibold">{selectedProduction.artist}</h3>
+            <h3 className="mt-2 text-lg font-semibold">{incoming?.title ?? selectedProduction.artist}</h3>
             <p className="mt-1 text-sm text-slate-300">
-              {selectedProduction.city} · FOH · €250
+              {incoming?.city ?? selectedProduction.city} · {incoming?.role ?? "Ruolo"} · {incoming?.fee ? `€${incoming.fee}` : "Cachet da confermare"}
             </p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button className="h-10 rounded-md bg-signal-green text-sm font-semibold text-ink-950">Accetta</button>
@@ -600,7 +736,7 @@ function MobilePreview({ selectedProduction }: { selectedProduction: Production 
           <div className="mt-5">
             <p className="text-sm font-semibold">Prossime date</p>
             <div className="mt-3 grid gap-2">
-              {professionalJobs.map((job) => (
+              {jobs.map((job) => (
                 <ProfessionalJobRow key={job.id} job={job} compact />
               ))}
             </div>
@@ -618,7 +754,7 @@ function MobilePreview({ selectedProduction }: { selectedProduction: Production 
   );
 }
 
-function ProfessionalJobRow({ job, compact = false }: { job: (typeof professionalJobs)[number]; compact?: boolean }) {
+function ProfessionalJobRow({ job, compact = false }: { job: ProfessionalJob; compact?: boolean }) {
   const statusClasses = {
     confirmed: "bg-emerald-100 text-emerald-700",
     reply: "bg-amber-100 text-amber-800",
